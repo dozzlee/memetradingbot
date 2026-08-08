@@ -1,0 +1,16 @@
+[Unit]
+Description=Vanguard Protocol - insider-cluster momentum monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vanguard
+WorkingDirectory=/opt/vanguard
+EnvironmentFile=/opt/vanguard/.env
+ExecStart=/opt/vanguard/.venv/bin/python -m vanguard.main
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
