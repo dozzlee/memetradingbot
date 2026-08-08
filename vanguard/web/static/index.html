@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vanguard Protocol</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0b0e11; --panel: #12161c; --border: #1f2630; --text: #e6e9ef;
+    --muted: #8a94a3; --green: #35d07f; --red: #ef4444; --amber: #f5a623; --blue: #4d9cff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 20px 28px; border-bottom: 1px solid var(--border); }
+  h1 { font-size: 18px; margin: 0; letter-spacing: 0.02em; }
+  .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+  .status-pill.running { background: rgba(53,208,127,0.15); color: var(--green); }
+  .status-pill.stopped { background: rgba(239,68,68,0.15); color: var(--red); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  main { padding: 24px 28px; max-width: 1100px; margin: 0 auto; display: grid; gap: 20px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 800px) { .row { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 14px; }
+  button { background: var(--blue); color: #fff; border: none; border-radius: 6px; padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  button.stop { background: var(--red); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .controls { display: flex; gap: 10px; align-items: center; }
+  input[type=text] { flex: 1; background: #0e1217; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: var(--text); font-size: 13px; }
+  .wallet-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .wallet-list li { display: flex; justify-content: space-between; align-items: center; background: #0e1217; border-radius: 6px; padding: 8px 10px; font-family: ui-monospace, monospace; font-size: 12px; }
+  .wallet-list button { background: transparent; color: var(--red); padding: 2px 8px; font-size: 12px; }
+  .config-grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; font-size: 13px; }
+  .config-grid dt { color: var(--muted); }
+  .config-grid dd { margin: 0; text-align: right; font-family: ui-monospace, monospace; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 8px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge.buy_detected { background: rgba(77,156,255,0.15); color: var(--blue); }
+  .badge.rejected { background: rgba(239,68,68,0.15); color: var(--red); }
+  .badge.abort { background: rgba(245,166,35,0.15); color: var(--amber); }
+  .badge.cleared { background: rgba(53,208,127,0.15); color: var(--green); }
+  .badge.error { background: rgba(239,68,68,0.3); color: var(--red); }
+  .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+  a { color: var(--blue); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Vanguard Protocol</h1>
+  <div style="display:flex; align-items:center; gap: 14px;">
+    <span id="status-pill" class="status-pill stopped"><span class="dot"></span><span id="status-text">stopped</span></span>
+    <button id="toggle-btn">Start</button>
+  </div>
+</header>
+<main>
+  <div class="row">
+    <div class="card">
+      <h2>Tracked Wallets</h2>
+      <div class="controls" style="margin-bottom: 12px;">
+        <input type="text" id="wallet-input" placeholder="Solana address to track">
+        <button id="add-wallet-btn">Add</button>
+      </div>
+      <ul class="wallet-list" id="wallet-list"></ul>
+    </div>
+    <div class="card">
+      <h2>Config (PRD §4-6)</h2>
+      <dl class="config-grid" id="config-grid"></dl>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Cleared Alerts</h2>
+    <table>
+      <thead><tr><th>Time</th><th>Mint</th><th>Risk score</th><th>Buy/sell</th><th>Wallet</th></tr></thead>
+      <tbody id="alerts-body"></tbody>
+    </table>
+    <div id="alerts-empty" class="empty">No alerts yet.</div>
+  </div>
+
+  <div class="card">
+    <h2>Decision Log</h2>
+    <table>
+      <thead><tr><th>Time</th><th>Stage</th><th>Mint</th><th>Detail</th></tr></thead>
+      <tbody id="events-body"></tbody>
+    </table>
+    <div id="events-empty" class="empty">No activity yet.</div>
+  </div>
+</main>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+const fmtTime = (ts) => new Date(ts * 1000).toLocaleTimeString();
+const short = (addr) => addr ? addr.slice(0, 4) + '…' + addr.slice(-4) : '';
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  return res.json();
+}
+
+async function refreshStatus() {
+  const s = await api('/api/status');
+  const pill = $('#status-pill');
+  pill.className = 'status-pill ' + (s.running ? 'running' : 'stopped');
+  $('#status-text').textContent = s.running ? 'running' : 'stopped';
+  $('#toggle-btn').textContent = s.running ? 'Stop' : 'Start';
+  $('#toggle-btn').className = s.running ? 'stop' : '';
+
+  $('#wallet-list').innerHTML = s.tracked_wallets.map(w =>
+    `<li><span>${short(w)}</span><button data-addr="${w}" class="remove-wallet">remove</button></li>`
+  ).join('') || '<div class="empty">No wallets tracked. Add one above.</div>';
+
+  const c = s.config;
+  $('#config-grid').innerHTML = `
+    <dt>Safety window</dt><dd>${c.safety_window_seconds}s</dd>
+    <dt>Momentum timeout</dt><dd>${c.momentum_timeout_seconds}s</dd>
+    <dt>Top-10 concentration limit</dt><dd>${c.top10_concentration_limit}%</dd>
+    <dt>Wallet poll interval</dt><dd>${c.wallet_poll_interval_seconds}s</dd>
+  `;
+
+  document.querySelectorAll('.remove-wallet').forEach(btn => {
+    btn.onclick = async () => {
+      await api('/api/wallets/' + encodeURIComponent(btn.dataset.addr), { method: 'DELETE' });
+      refreshStatus();
+    };
+  });
+}
+
+async function refreshAlerts() {
+  const alerts = await api('/api/alerts');
+  $('#alerts-empty').style.display = alerts.length ? 'none' : 'block';
+  $('#alerts-body').innerHTML = alerts.map(a => `
+    <tr>
+      <td>${fmtTime(a.ts)}</td>
+      <td class="mono"><a href="https://solscan.io/token/${a.mint}" target="_blank">${short(a.mint)}</a></td>
+      <td>${a.risk_score}</td>
+      <td>${a.buy_sell_ratio}</td>
+      <td class="mono">${short(a.wallet)}</td>
+    </tr>`).join('');
+}
+
+async function refreshEvents() {
+  const events = await api('/api/events');
+  $('#events-empty').style.display = events.length ? 'none' : 'block';
+  $('#events-body').innerHTML = events.map(e => `
+    <tr>
+      <td>${fmtTime(e.ts)}</td>
+      <td><span class="badge ${e.kind}">${e.kind.replace('_',' ')}</span></td>
+      <td class="mono">${short(e.mint)}</td>
+      <td>${e.detail || ''}</td>
+    </tr>`).join('');
+}
+
+$('#toggle-btn').onclick = async () => {
+  const s = await api('/api/status');
+  await api(s.running ? '/api/control/stop' : '/api/control/start', { method: 'POST' });
+  refreshStatus();
+};
+
+$('#add-wallet-btn').onclick = async () => {
+  const input = $('#wallet-input');
+  if (!input.value.trim()) return;
+  await api('/api/wallets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address: input.value.trim() }),
+  });
+  input.value = '';
+  refreshStatus();
+};
+
+function refreshAll() { refreshStatus(); refreshAlerts(); refreshEvents(); }
+refreshAll();
+setInterval(refreshAll, 4000);
+</script>
+</body>
+</html>

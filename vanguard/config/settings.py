@@ -4,7 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "")
-HELIUS_WS_URL = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+
+WALLET_POLL_INTERVAL_SECONDS = 10
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")

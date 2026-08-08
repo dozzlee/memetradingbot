@@ -20,18 +20,21 @@ def check_momentum(mint: str, insider_wallet: str, insider_still_holding_fn) -> 
 
     reasons = []
 
-    price_change_m5 = data.get("priceChange", {}).get("m5", 0)
+    price_change_m5 = (data.get("priceChange") or {}).get("m5", 0)
     if price_change_m5 < -2:
         reasons.append("still bleeding, not basing")
 
-    buys = data.get("txns", {}).get("m5", {}).get("buys", 0)
-    sells = data.get("txns", {}).get("m5", {}).get("sells", 0)
+    txns_m5 = (data.get("txns") or {}).get("m5") or {}
+    buys = txns_m5.get("buys", 0)
+    sells = txns_m5.get("sells", 0)
     if sells and buys / max(sells, 1) < 1.0:
         reasons.append("buy/sell ratio not net-positive")
 
-    liquidity_usd = data.get("liquidity", {}).get("usd", 0)
-    if liquidity_usd <= 0:
-        reasons.append("no liquidity data / LP pulled")
+    # pump.fun pairs pre-graduation report no `liquidity` block (bonding
+    # curve, not an LP) — only require this check once liquidity is reported.
+    liquidity = data.get("liquidity")
+    if liquidity is not None and liquidity.get("usd", 0) <= 0:
+        reasons.append("no liquidity / LP pulled")
 
     if not insider_still_holding_fn(insider_wallet, mint):
         reasons.append("insider sold — abort (decoy/rug)")
