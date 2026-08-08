@@ -45,6 +45,13 @@
   .badge.error { background: rgba(239,68,68,0.3); color: var(--red); }
   .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
   a { color: var(--blue); }
+  .pnl-pos { color: var(--green); }
+  .pnl-neg { color: var(--red); }
+  .trade-form { display: grid; grid-template-columns: repeat(4, 1fr) auto; gap: 8px; margin-bottom: 14px; }
+  .trade-form input { background: #0e1217; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: var(--text); font-size: 13px; }
+  .close-form { display: flex; gap: 6px; }
+  .close-form input { width: 70px; background: #0e1217; border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; color: var(--text); font-size: 12px; }
+  .close-form button { padding: 4px 10px; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -87,6 +94,22 @@
       <tbody id="events-body"></tbody>
     </table>
     <div id="events-empty" class="empty">No activity yet.</div>
+  </div>
+
+  <div class="card">
+    <h2>Trade Ledger (manual — log what you actually did in the execution bot)</h2>
+    <div class="trade-form">
+      <input type="text" id="trade-mint" placeholder="Mint address">
+      <input type="text" id="trade-wallet" placeholder="Source wallet (optional)">
+      <input type="number" step="any" id="trade-entry" placeholder="Entry price USD">
+      <input type="number" step="any" id="trade-size" placeholder="Size USD" value="5">
+      <button id="open-trade-btn">Log Entry</button>
+    </div>
+    <table>
+      <thead><tr><th>Opened</th><th>Mint</th><th>Entry</th><th>Size</th><th>Status</th><th>P&amp;L</th></tr></thead>
+      <tbody id="trades-body"></tbody>
+    </table>
+    <div id="trades-empty" class="empty">No trades logged yet.</div>
   </div>
 </main>
 
@@ -171,7 +194,65 @@ $('#add-wallet-btn').onclick = async () => {
   refreshStatus();
 };
 
-function refreshAll() { refreshStatus(); refreshAlerts(); refreshEvents(); }
+async function refreshTrades() {
+  const trades = await api('/api/trades');
+  $('#trades-empty').style.display = trades.length ? 'none' : 'block';
+  $('#trades-body').innerHTML = trades.map(t => {
+    const isOpen = t.closed_at === null;
+    const pnlClass = t.pnl_usd > 0 ? 'pnl-pos' : (t.pnl_usd < 0 ? 'pnl-neg' : '');
+    const statusCell = isOpen
+      ? `<span class="close-form">
+           <input type="number" step="any" placeholder="exit $" data-trade="${t.id}" class="exit-price">
+           <input type="number" step="any" placeholder="fees $" data-trade="${t.id}" class="exit-fees" value="0">
+           <button data-trade="${t.id}" class="close-trade-btn">Close</button>
+         </span>`
+      : `<span class="badge ${t.outcome === 'win' ? 'cleared' : (t.outcome === 'loss' ? 'rejected' : 'abort')}">${t.outcome}</span>`;
+    return `
+    <tr>
+      <td>${fmtTime(t.opened_at)}</td>
+      <td class="mono"><a href="https://solscan.io/token/${t.mint}" target="_blank">${short(t.mint)}</a></td>
+      <td>$${Number(t.entry_price_usd).toPrecision(4)}</td>
+      <td>$${t.size_usd}</td>
+      <td>${statusCell}</td>
+      <td class="${pnlClass}">${t.pnl_usd !== null ? '$' + Number(t.pnl_usd).toFixed(2) : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  document.querySelectorAll('.close-trade-btn').forEach(btn => {
+    btn.onclick = async () => {
+      const id = btn.dataset.trade;
+      const exitPrice = document.querySelector(`.exit-price[data-trade="${id}"]`).value;
+      const fees = document.querySelector(`.exit-fees[data-trade="${id}"]`).value || 0;
+      if (!exitPrice) return;
+      await api(`/api/trades/${id}/close`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exit_price_usd: Number(exitPrice), fees_usd: Number(fees) }),
+      });
+      refreshTrades();
+    };
+  });
+}
+
+$('#open-trade-btn').onclick = async () => {
+  const mint = $('#trade-mint').value.trim();
+  const entry = $('#trade-entry').value;
+  if (!mint || !entry) return;
+  await api('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mint,
+      wallet: $('#trade-wallet').value.trim(),
+      entry_price_usd: Number(entry),
+      size_usd: Number($('#trade-size').value || 5),
+    }),
+  });
+  $('#trade-mint').value = ''; $('#trade-wallet').value = ''; $('#trade-entry').value = '';
+  refreshTrades();
+};
+
+function refreshAll() { refreshStatus(); refreshAlerts(); refreshEvents(); refreshTrades(); }
 refreshAll();
 setInterval(refreshAll, 4000);
 </script>

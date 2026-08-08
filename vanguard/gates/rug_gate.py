@@ -1,11 +1,41 @@
-"""Stage 1 — automated pre-buy safety check via RugCheck.xyz (PRD §5)."""
+"""Stage 1 — automated pre-buy safety check via RugCheck.xyz (PRD §5),
+with an optional Solana Tracker cross-confirmation (PRD §5, "optional
+second source")."""
 import requests
 
+from vanguard.config import settings
+
 RUGCHECK_URL = "https://api.rugcheck.xyz/v1/tokens/{mint}/report"
+SOLANA_TRACKER_URL = "https://data.solanatracker.io/tokens/{mint}"
 
 # Honeypot / sell-route simulation isn't covered here — RugCheck's public
 # report doesn't include it, and simulating a real sell needs a funded
 # wallet + swap quote. Treat this gate as necessary but not sufficient.
+
+
+def _cross_confirm(mint: str) -> list[str]:
+    """Best-effort — only runs if SOLANA_TRACKER_API_KEY is set. Failures
+    here should never block a trade on their own; RugCheck is primary."""
+    if not settings.SOLANA_TRACKER_API_KEY:
+        return []
+    try:
+        resp = requests.get(
+            SOLANA_TRACKER_URL.format(mint=mint),
+            headers={"x-api-key": settings.SOLANA_TRACKER_API_KEY},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        risk = resp.json().get("risk", {})
+    except requests.RequestException:
+        return []
+
+    reasons = []
+    if risk.get("rugged"):
+        reasons.append("Solana Tracker: flagged as rugged")
+    score = risk.get("score")
+    if isinstance(score, (int, float)) and score >= 7:
+        reasons.append(f"Solana Tracker: danger score {score}/10")
+    return reasons
 
 
 def check_token(mint: str, top10_limit: int) -> dict:
@@ -47,6 +77,8 @@ def check_token(mint: str, top10_limit: int) -> dict:
     for risk in data.get("risks") or []:
         if risk.get("level") in ("danger", "high"):
             reasons.append(f"RugCheck risk: {risk.get('name')}")
+
+    reasons.extend(_cross_confirm(mint))
 
     return {
         "pass": len(reasons) == 0,

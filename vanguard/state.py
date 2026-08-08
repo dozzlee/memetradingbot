@@ -1,7 +1,9 @@
-"""In-memory shared state between the monitor loop and the web dashboard.
-Single process, single asyncio event loop — no IPC/DB needed for now."""
+"""Shared runtime state between the monitor loop and the web dashboard,
+backed by SQLite (vanguard/db.py) so it survives restarts."""
 import time
 from dataclasses import dataclass, field
+
+from vanguard import db
 
 
 @dataclass
@@ -9,29 +11,33 @@ class AppState:
     running: bool = False
     started_at: float | None = None
     tracked_wallets: list[str] = field(default_factory=list)
-    events: list[dict] = field(default_factory=list)  # cleared / rejected / aborted / error
-    alerts: list[dict] = field(default_factory=list)  # tokens that passed both gates
     monitor_task: object = None  # asyncio.Task, set by the control API
 
+    def load(self):
+        db.init_db()
+        self.tracked_wallets = db.list_wallets()
+
+    def add_wallet(self, address: str):
+        if address and address not in self.tracked_wallets:
+            self.tracked_wallets.append(address)
+            db.add_wallet(address)
+
+    def remove_wallet(self, address: str):
+        if address in self.tracked_wallets:
+            self.tracked_wallets.remove(address)
+            db.remove_wallet(address)
+
     def log_event(self, kind: str, wallet: str, mint: str, detail: str = ""):
-        self.events.insert(0, {
-            "ts": time.time(),
-            "kind": kind,  # "buy_detected" | "rejected" | "abort" | "cleared" | "error"
-            "wallet": wallet,
-            "mint": mint,
-            "detail": detail,
-        })
-        self.events = self.events[:200]
+        db.log_event(kind, wallet, mint, detail)
+
+    def events(self, limit: int = 200):
+        return db.list_events(limit)
 
     def log_alert(self, mint: str, risk_score, buy_sell_ratio: str, wallet: str):
-        self.alerts.insert(0, {
-            "ts": time.time(),
-            "mint": mint,
-            "risk_score": risk_score,
-            "buy_sell_ratio": buy_sell_ratio,
-            "wallet": wallet,
-        })
-        self.alerts = self.alerts[:100]
+        db.log_alert(mint, wallet, risk_score, buy_sell_ratio)
+
+    def alerts(self, limit: int = 100):
+        return db.list_alerts(limit)
 
 
 state = AppState()

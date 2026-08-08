@@ -25,3 +25,10 @@ MOMENTUM_TIMEOUT_SECONDS = 180
 
 # Rug-gate hard-block threshold: top-10 holder concentration (%)
 TOP10_CONCENTRATION_LIMIT = 30
+
+# PRD §7: only ~1% of pump.fun tokens graduate — a strong survival signal.
+# Off by default: requiring it filters out most legitimate early entries,
+# since the momentum gate is specifically about catching the second leg up
+# *before* graduation. Flip on during calibration if false-positive rate
+# on pre-graduation tokens turns out too high.
+REQUIRE_PUMPFUN_GRADUATION = os.getenv("REQUIRE_PUMPFUN_GRADUATION", "false").lower() == "true"

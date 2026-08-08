@@ -2,10 +2,11 @@ import asyncio
 import time
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from vanguard import db
 from vanguard.config import settings
 from vanguard.core.wallet_tracker import watch_wallets
 from vanguard.pipeline import on_buy
@@ -18,7 +19,11 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 @app.on_event("startup")
 async def startup():
-    state.tracked_wallets = list(settings.TRACKED_WALLETS)
+    state.load()
+    # Seed from .env on first run only — DB is authoritative after that,
+    # so wallets added/removed via the dashboard survive a restart.
+    for addr in settings.TRACKED_WALLETS:
+        state.add_wallet(addr)
 
 
 @app.get("/")
@@ -38,18 +43,20 @@ async def status():
             "momentum_timeout_seconds": settings.MOMENTUM_TIMEOUT_SECONDS,
             "top10_concentration_limit": settings.TOP10_CONCENTRATION_LIMIT,
             "wallet_poll_interval_seconds": settings.WALLET_POLL_INTERVAL_SECONDS,
+            "require_pumpfun_graduation": settings.REQUIRE_PUMPFUN_GRADUATION,
+            "solana_tracker_enabled": bool(settings.SOLANA_TRACKER_API_KEY),
         },
     }
 
 
 @app.get("/api/events")
 async def events():
-    return state.events
+    return state.events()
 
 
 @app.get("/api/alerts")
 async def alerts():
-    return state.alerts
+    return state.alerts()
 
 
 class WalletPayload(BaseModel):
@@ -58,16 +65,13 @@ class WalletPayload(BaseModel):
 
 @app.post("/api/wallets")
 async def add_wallet(payload: WalletPayload):
-    addr = payload.address.strip()
-    if addr and addr not in state.tracked_wallets:
-        state.tracked_wallets.append(addr)
+    state.add_wallet(payload.address.strip())
     return {"tracked_wallets": state.tracked_wallets}
 
 
 @app.delete("/api/wallets/{address}")
 async def remove_wallet(address: str):
-    if address in state.tracked_wallets:
-        state.tracked_wallets.remove(address)
+    state.remove_wallet(address)
     return {"tracked_wallets": state.tracked_wallets}
 
 
@@ -91,3 +95,40 @@ async def stop_monitor():
     state.running = False
     state.started_at = None
     return {"running": False}
+
+
+# --- trade ledger (manual — the bot never executes trades itself) ---
+
+class OpenTradePayload(BaseModel):
+    mint: str
+    wallet: str = ""
+    entry_price_usd: float
+    size_usd: float = 5.0
+    notes: str = ""
+
+
+class CloseTradePayload(BaseModel):
+    exit_price_usd: float
+    fees_usd: float = 0.0
+
+
+@app.get("/api/trades")
+async def list_trades():
+    return db.list_trades()
+
+
+@app.post("/api/trades")
+async def open_trade(payload: OpenTradePayload):
+    trade_id = db.open_trade(
+        payload.mint, payload.wallet, payload.entry_price_usd, payload.size_usd, payload.notes
+    )
+    return {"id": trade_id}
+
+
+@app.post("/api/trades/{trade_id}/close")
+async def close_trade(trade_id: int, payload: CloseTradePayload):
+    try:
+        pnl = db.close_trade(trade_id, payload.exit_price_usd, payload.fees_usd)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="trade not found")
+    return {"pnl_usd": pnl}

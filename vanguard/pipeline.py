@@ -56,7 +56,8 @@ async def on_buy(wallet: str, mint: str):
             except Exception:
                 logger.exception("telegram send failed for %s", mint)
             state.log_alert(mint, gate_result.get("score", "n/a"), ratio, wallet)
-            state.log_event("cleared", wallet, mint, f"buy/sell {ratio}")
+            grad_note = "graduated off pump.fun" if momentum.get("graduated") else "still on pump.fun bonding curve"
+            state.log_event("cleared", wallet, mint, f"buy/sell {ratio}, {grad_note}")
             logger.info("alert sent for %s", mint)
             return
 
