@@ -97,6 +97,21 @@
   </div>
 
   <div class="card">
+    <h2>Discover Wallets — find copy-trading candidates automatically</h2>
+    <div class="disclaimer">
+      Scans currently-liquid, recently-launched Solana tokens above a market-cap floor, pulls each one's
+      first ~10 buyers via Helius, and ranks wallets by how many <em>different</em> tokens they were early
+      on. This is a broader "smart early money" signal, not confirmation of a shared developer — a wallet
+      with a high hit count is a strong lead to look closer at (backtest it), not an auto-add.
+    </div>
+    <div class="controls" style="margin-bottom: 14px;">
+      <input type="number" id="discover-mcap" placeholder="Min market cap USD" value="500000" style="max-width:180px;">
+      <button id="discover-btn">Scan</button>
+    </div>
+    <div id="discover-result"></div>
+  </div>
+
+  <div class="card">
     <h2>Token Inspector — analyze a coin before you buy</h2>
     <div class="disclaimer">Runs the same rug-gate + momentum-gate checks the live pipeline uses, on demand. Doesn't need a funded wallet or a live buy trigger.</div>
     <div class="controls" style="margin-bottom: 14px;">
@@ -381,6 +396,55 @@ async function runBacktest(wallet) {
 }
 
 $('#backtest-close').onclick = () => $('#backtest-modal').classList.remove('open');
+
+$('#discover-btn').onclick = async () => {
+  const minMcap = Number($('#discover-mcap').value || 500000);
+  const out = $('#discover-result');
+  out.innerHTML = '<div class="empty">Scanning candidate tokens and pulling early buyers — this can take 20-30s…</div>';
+  const r = await api(`/api/discover?min_mcap=${minMcap}&max_tokens=15`);
+  const tokenList = r.scanned_tokens.map(t => `${t.symbol} ($${Math.round(t.market_cap).toLocaleString()})`).join(', ') || 'none qualified';
+  if (!r.wallets.length) {
+    out.innerHTML = `
+      <div class="stat-row"><div class="stat"><div class="label">Tokens scanned</div><div class="value">${r.scanned_tokens.length}</div></div></div>
+      <div class="empty">Scanned: ${tokenList}. No wallet showed up early on 2+ of them this pass — try a lower market-cap floor or scan again later (candidate pool refreshes).</div>`;
+    return;
+  }
+  out.innerHTML = `
+    <div class="stat-row"><div class="stat"><div class="label">Tokens scanned</div><div class="value">${r.scanned_tokens.length}</div></div>
+      <div class="stat"><div class="label">Candidate wallets</div><div class="value">${r.wallets.length}</div></div></div>
+    <div class="disclaimer">Scanned: ${tokenList}</div>
+    <table>
+      <thead><tr><th>Wallet</th><th>Hit count</th><th>Tokens</th><th></th></tr></thead>
+      <tbody>
+        ${r.wallets.map(w => `
+          <tr>
+            <td class="mono"><a href="https://solscan.io/account/${w.address}" target="_blank">${short(w.address)}</a></td>
+            <td>${w.hit_count}</td>
+            <td>${w.tokens.map(t => t.symbol).join(', ')}</td>
+            <td>
+              <button data-addr="${w.address}" class="discover-backtest" style="font-size:12px; padding:4px 10px;">backtest</button>
+              <button data-addr="${w.address}" class="discover-track" style="font-size:12px; padding:4px 10px;">track</button>
+            </td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
+  `;
+  document.querySelectorAll('.discover-track').forEach(btn => {
+    btn.onclick = async () => {
+      await api('/api/wallets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: btn.dataset.addr }),
+      });
+      btn.textContent = 'tracked ✓';
+      btn.disabled = true;
+      refreshStatus();
+    };
+  });
+  document.querySelectorAll('.discover-backtest').forEach(btn => {
+    btn.onclick = () => runBacktest(btn.dataset.addr);
+  });
+};
 
 function refreshAll() { refreshStatus(); refreshAlerts(); refreshEvents(); refreshTrades(); }
 refreshAll();

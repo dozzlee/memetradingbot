@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from vanguard import backtest, db
+from vanguard import backtest, db, discovery
 from vanguard.config import settings
 from vanguard.core.wallet_tracker import watch_wallets
 from vanguard.pipeline import on_buy
@@ -111,6 +111,11 @@ async def inspect(payload: InspectPayload):
 @app.get("/api/wallets/{address}/backtest")
 async def wallet_backtest(address: str, max_buys: int = 20):
     return await asyncio.to_thread(backtest.backtest_wallet, address, max_buys)
+
+
+@app.get("/api/discover")
+async def discover(min_mcap: float = 500_000, max_tokens: int = 15):
+    return await asyncio.to_thread(discovery.discover_wallets, min_mcap, max_tokens)
 
 
 # --- trade ledger (manual — the bot never executes trades itself) ---
