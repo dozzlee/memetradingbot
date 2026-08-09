@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vanguard Setup"
+  short_description: "Securely configure and operate Vanguard Protocol"
+  default_prompt: "Set up Vanguard Protocol securely, validate the APIs and Telegram destination without exposing secrets, onboard the supplied wallet, and verify the web app."

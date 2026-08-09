@@ -70,6 +70,10 @@
   .modal-backdrop.open { display: flex; }
   .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; max-width: 700px; width: 100%; }
   .modal-close { float: right; background: transparent; color: var(--muted); font-size: 13px; padding: 4px 8px; }
+  .address-cell { min-width: 280px; }
+  .address-full { display: block; overflow-wrap: anywhere; line-height: 1.45; }
+  .address-actions { display: flex; gap: 6px; margin-top: 5px; }
+  .address-actions button { padding: 3px 8px; font-size: 11px; background: #202936; }
 </style>
 </head>
 <body>
@@ -418,7 +422,13 @@ $('#discover-btn').onclick = async () => {
       <tbody>
         ${r.wallets.map(w => `
           <tr>
-            <td class="mono"><a href="https://solscan.io/account/${w.address}" target="_blank">${short(w.address)}</a></td>
+            <td class="mono address-cell">
+              <span class="address-full">${w.address}</span>
+              <span class="address-actions">
+                <button data-addr="${w.address}" class="copy-address">copy</button>
+                <a href="https://solscan.io/account/${w.address}" target="_blank" rel="noopener">Solscan ↗</a>
+              </span>
+            </td>
             <td>${w.hit_count}</td>
             <td>${w.tokens.map(t => t.symbol).join(', ')}</td>
             <td>
@@ -443,6 +453,14 @@ $('#discover-btn').onclick = async () => {
   });
   document.querySelectorAll('.discover-backtest').forEach(btn => {
     btn.onclick = () => runBacktest(btn.dataset.addr);
+  });
+  document.querySelectorAll('.copy-address').forEach(btn => {
+    btn.onclick = async () => {
+      await navigator.clipboard.writeText(btn.dataset.addr);
+      const original = btn.textContent;
+      btn.textContent = 'copied ✓';
+      setTimeout(() => { btn.textContent = original; }, 1400);
+    };
   });
 };
 

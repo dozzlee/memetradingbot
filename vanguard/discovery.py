@@ -46,8 +46,13 @@ MIN_AGE_SECONDS = 30 * 60  # needs a settled-enough history to have real "early"
 # surfaces random recent traders, not insiders. Caps the pool to genuinely
 # recent launches, matching the PRD's actual target (new pump.fun tokens).
 MAX_AGE_SECONDS = 90 * 24 * 60 * 60
-EARLY_BUYERS_PER_TOKEN = 10
-MAX_PAGES = 3
+# The first ~10-15 buyers of any pump.fun launch are almost always sniper
+# bots (sub-second execution) rather than insiders — confirmed empirically
+# while building this (every candidate in an initial test pass with a
+# buyer-window of 10 turned out to be a bot on inspection). Widened so the
+# overlap-ranking has a chance of surfacing wallets past the sniper wall.
+EARLY_BUYERS_PER_TOKEN = 30
+MAX_PAGES = 5
 
 # Established infra/majors that show up in keyword search results but are
 # not memecoin launches — including them would poison the "early buyer"
@@ -55,6 +60,16 @@ MAX_PAGES = 3
 # for majors whose age alone might not exclude them, e.g. a new wrapped
 # variant).
 EXCLUDED_SYMBOLS = {"SOL", "WSOL", "USDC", "USDT", "BONK", "PUMP", "ETH", "WBTC", "JUP", "JTO"}
+
+WALLET_TX_URL = "https://api.helius.xyz/v0/addresses/{wallet}/transactions"
+# A human doing manual research-then-buy cannot sustain a high swap rate.
+# Checked two real candidates while building this: one did 69 swaps in 21
+# seconds (obvious router bot); a second looked fine on a fixed 5-minute
+# window but was 64 swaps in ~9.6 minutes once measured properly — still
+# ~6.6 swaps/min, still a bot. Rate-based, not a fixed window, because a
+# bot slow enough to dodge a flat time cutoff is still not a human trader.
+BOT_MIN_SWAPS = 15
+BOT_MAX_SWAPS_PER_MINUTE = 1.5
 
 
 def _candidate_mints() -> list[str]:
@@ -167,6 +182,28 @@ def _early_buyers(mint: str) -> list[str]:
     return buyers[:EARLY_BUYERS_PER_TOKEN]
 
 
+def _looks_like_bot(wallet: str) -> bool:
+    try:
+        resp = requests.get(
+            WALLET_TX_URL.format(wallet=wallet),
+            params={"api-key": settings.HELIUS_API_KEY, "type": "SWAP", "limit": 100},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        txs = resp.json()
+    except requests.RequestException:
+        return False  # can't tell — don't penalize on a failed lookup
+
+    timestamps = [tx["timestamp"] for tx in txs if "timestamp" in tx]
+    if len(timestamps) < BOT_MIN_SWAPS:
+        return False
+    span_minutes = (max(timestamps) - min(timestamps)) / 60
+    if span_minutes <= 0:
+        return True  # all in the same second — definitely automated
+    rate = len(timestamps) / span_minutes
+    return rate > BOT_MAX_SWAPS_PER_MINUTE
+
+
 def discover_wallets(min_mcap: float = 1_000_000, max_tokens: int = 12) -> dict:
     candidates = _candidate_mints()
     qualified = []
@@ -185,11 +222,18 @@ def discover_wallets(min_mcap: float = 1_000_000, max_tokens: int = 12) -> dict:
         for w in buyers:
             wallet_hits[w].append(token)
 
-    ranked = [
+    candidates = [
         {"address": w, "hit_count": len(tokens), "tokens": tokens}
         for w, tokens in wallet_hits.items()
         if len(tokens) >= 2  # appearing early on just one token is not a signal
     ]
+
+    ranked, excluded_bots = [], []
+    for c in candidates:
+        if _looks_like_bot(c["address"]):
+            excluded_bots.append(c["address"])
+        else:
+            ranked.append(c)
     ranked.sort(key=lambda r: (-r["hit_count"], -sum(t["market_cap"] for t in r["tokens"])))
 
-    return {"scanned_tokens": scanned, "wallets": ranked}
+    return {"scanned_tokens": scanned, "wallets": ranked, "excluded_bots": excluded_bots}

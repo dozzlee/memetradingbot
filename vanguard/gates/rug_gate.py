@@ -35,6 +35,9 @@ def _cross_confirm(mint: str) -> list[str]:
     score = risk.get("score")
     if isinstance(score, (int, float)) and score >= 7:
         reasons.append(f"Solana Tracker: danger score {score}/10")
+    for r in risk.get("risks") or []:
+        if r.get("level") in ("danger", "high"):
+            reasons.append(f"Solana Tracker risk: {r.get('name')} ({r.get('value', '')})".strip())
     return reasons
 
 
