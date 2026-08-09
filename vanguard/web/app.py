@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from vanguard import db
+from vanguard import backtest, db
 from vanguard.config import settings
 from vanguard.core.wallet_tracker import watch_wallets
 from vanguard.pipeline import on_buy
@@ -95,6 +95,22 @@ async def stop_monitor():
     state.running = False
     state.started_at = None
     return {"running": False}
+
+
+# --- analysis (no funded wallet or live trigger required) ---
+
+class InspectPayload(BaseModel):
+    mint: str
+
+
+@app.post("/api/inspect")
+async def inspect(payload: InspectPayload):
+    return await asyncio.to_thread(backtest.inspect_token, payload.mint.strip())
+
+
+@app.get("/api/wallets/{address}/backtest")
+async def wallet_backtest(address: str, max_buys: int = 20):
+    return await asyncio.to_thread(backtest.backtest_wallet, address, max_buys)
 
 
 # --- trade ledger (manual — the bot never executes trades itself) ---

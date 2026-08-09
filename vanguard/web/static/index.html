@@ -52,6 +52,24 @@
   .close-form { display: flex; gap: 6px; }
   .close-form input { width: 70px; background: #0e1217; border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; color: var(--text); font-size: 12px; }
   .close-form button { padding: 4px 10px; font-size: 12px; }
+  .wallet-list button.backtest { background: transparent; color: var(--blue); padding: 2px 8px; font-size: 12px; margin-right: 4px; }
+  .verdict { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 700; margin-bottom: 12px; }
+  .verdict.pass { background: rgba(53,208,127,0.15); color: var(--green); }
+  .verdict.fail { background: rgba(239,68,68,0.15); color: var(--red); }
+  .verdict.unknown { background: rgba(138,148,163,0.15); color: var(--muted); }
+  .reason-list { margin: 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+  .reason-list li { margin-bottom: 3px; }
+  .inspect-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .inspect-grid { grid-template-columns: 1fr; } }
+  .stat-row { display: flex; gap: 20px; margin-bottom: 12px; flex-wrap: wrap; }
+  .stat { background: #0e1217; border-radius: 6px; padding: 8px 14px; }
+  .stat .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .stat .value { font-size: 18px; font-weight: 700; }
+  .disclaimer { font-size: 12px; color: var(--muted); font-style: italic; margin-bottom: 12px; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: flex-start; justify-content: center; padding: 40px 20px; overflow-y: auto; z-index: 10; }
+  .modal-backdrop.open { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; max-width: 700px; width: 100%; }
+  .modal-close { float: right; background: transparent; color: var(--muted); font-size: 13px; padding: 4px 8px; }
 </style>
 </head>
 <body>
@@ -76,6 +94,16 @@
       <h2>Config (PRD §4-6)</h2>
       <dl class="config-grid" id="config-grid"></dl>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>Token Inspector — analyze a coin before you buy</h2>
+    <div class="disclaimer">Runs the same rug-gate + momentum-gate checks the live pipeline uses, on demand. Doesn't need a funded wallet or a live buy trigger.</div>
+    <div class="controls" style="margin-bottom: 14px;">
+      <input type="text" id="inspect-input" placeholder="Mint address to analyze">
+      <button id="inspect-btn">Analyze</button>
+    </div>
+    <div id="inspect-result"></div>
   </div>
 
   <div class="card">
@@ -113,6 +141,19 @@
   </div>
 </main>
 
+<div class="modal-backdrop" id="backtest-modal">
+  <div class="modal">
+    <button class="modal-close" id="backtest-close">close ✕</button>
+    <h2 style="margin-top:0;">Wallet Track Record</h2>
+    <div class="disclaimer">
+      Holding-to-now returns on this wallet's past buys (SOL-denominated, vs. current DexScreener price) —
+      not a replay of the momentum-gate's exact entry timing, since historical tick data isn't available on
+      the free tier. Use this to judge whether the wallet is worth tracking at all, not to predict exact trade P&amp;L.
+    </div>
+    <div id="backtest-body"></div>
+  </div>
+</div>
+
 <script>
 const $ = (sel) => document.querySelector(sel);
 const fmtTime = (ts) => new Date(ts * 1000).toLocaleTimeString();
@@ -132,8 +173,15 @@ async function refreshStatus() {
   $('#toggle-btn').className = s.running ? 'stop' : '';
 
   $('#wallet-list').innerHTML = s.tracked_wallets.map(w =>
-    `<li><span>${short(w)}</span><button data-addr="${w}" class="remove-wallet">remove</button></li>`
+    `<li><span>${short(w)}</span><span>
+       <button data-addr="${w}" class="backtest">backtest</button>
+       <button data-addr="${w}" class="remove-wallet">remove</button>
+     </span></li>`
   ).join('') || '<div class="empty">No wallets tracked. Add one above.</div>';
+
+  document.querySelectorAll('.backtest').forEach(btn => {
+    btn.onclick = () => runBacktest(btn.dataset.addr);
+  });
 
   const c = s.config;
   $('#config-grid').innerHTML = `
@@ -251,6 +299,88 @@ $('#open-trade-btn').onclick = async () => {
   $('#trade-mint').value = ''; $('#trade-wallet').value = ''; $('#trade-entry').value = '';
   refreshTrades();
 };
+
+function reasonList(reasons) {
+  if (!reasons || !reasons.length) return '<div class="empty" style="padding:0;">none</div>';
+  return `<ul class="reason-list">${reasons.map(r => `<li>${r}</li>`).join('')}</ul>`;
+}
+
+function verdictBadge(pass) {
+  if (pass === true) return '<span class="verdict pass">✓ PASS</span>';
+  if (pass === false) return '<span class="verdict fail">✕ FAIL</span>';
+  return '<span class="verdict unknown">? UNKNOWN</span>';
+}
+
+$('#inspect-btn').onclick = async () => {
+  const mint = $('#inspect-input').value.trim();
+  if (!mint) return;
+  const out = $('#inspect-result');
+  out.innerHTML = '<div class="empty">Analyzing…</div>';
+  const r = await api('/api/inspect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mint }),
+  });
+  const rg = r.rug_gate || {};
+  const mo = r.momentum || {};
+  const raw = mo.raw || {};
+  out.innerHTML = `
+    <div class="inspect-grid">
+      <div>
+        <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">Stage 1 — Rug Gate ${rg.score !== undefined ? '(score ' + rg.score + ')' : ''}</div>
+        ${verdictBadge(rg.pass)}
+        ${reasonList(rg.reasons)}
+      </div>
+      <div>
+        <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">Stage 2 — Momentum Gate</div>
+        ${verdictBadge(mo.ready)}
+        ${reasonList(mo.reasons)}
+      </div>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><div class="label">Price</div><div class="value">$${raw.priceUsd || '—'}</div></div>
+      <div class="stat"><div class="label">Liquidity</div><div class="value">$${raw.liquidity ? Math.round(raw.liquidity.usd).toLocaleString() : '—'}</div></div>
+      <div class="stat"><div class="label">5m buys/sells</div><div class="value">${raw.txns && raw.txns.m5 ? raw.txns.m5.buys + '/' + raw.txns.m5.sells : '—'}</div></div>
+      <div class="stat"><div class="label">Graduated</div><div class="value">${mo.graduated === undefined ? '—' : (mo.graduated ? 'yes' : 'no (bonding curve)')}</div></div>
+    </div>
+    <a href="https://solscan.io/token/${mint}" target="_blank">View on Solscan →</a>
+  `;
+};
+
+async function runBacktest(wallet) {
+  $('#backtest-modal').classList.add('open');
+  const body = $('#backtest-body');
+  body.innerHTML = '<div class="empty">Pulling swap history and pricing each token — this can take a bit…</div>';
+  const r = await api(`/api/wallets/${encodeURIComponent(wallet)}/backtest`);
+  if (r.error) {
+    body.innerHTML = `<div class="empty">Failed: ${r.error}</div>`;
+    return;
+  }
+  const winRate = r.win_rate_pct !== null ? r.win_rate_pct + '%' : '—';
+  const avgReturn = r.avg_return_pct !== null ? (r.avg_return_pct > 0 ? '+' : '') + r.avg_return_pct + '%' : '—';
+  body.innerHTML = `
+    <div class="stat-row">
+      <div class="stat"><div class="label">Buys found</div><div class="value">${r.buys_found}</div></div>
+      <div class="stat"><div class="label">Win rate</div><div class="value">${winRate}</div></div>
+      <div class="stat"><div class="label">Avg return</div><div class="value">${avgReturn}</div></div>
+      <div class="stat"><div class="label">Pass gate today</div><div class="value">${r.would_pass_gate_today_count}/${r.buys_found}</div></div>
+    </div>
+    <table>
+      <thead><tr><th>Mint</th><th>SOL spent</th><th>Return</th><th>Gate today</th></tr></thead>
+      <tbody>
+        ${r.trades.map(t => `
+          <tr>
+            <td class="mono"><a href="https://solscan.io/token/${t.mint}" target="_blank">${short(t.mint)}</a></td>
+            <td>${Number(t.sol_spent).toPrecision(3)}</td>
+            <td class="${t.return_pct > 0 ? 'pnl-pos' : (t.return_pct < 0 ? 'pnl-neg' : '')}">${t.return_pct !== null ? (t.return_pct > 0 ? '+' : '') + t.return_pct.toFixed(1) + '%' : (t.note || '—')}</td>
+            <td>${verdictBadge(t.would_pass_gate_today)}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+$('#backtest-close').onclick = () => $('#backtest-modal').classList.remove('open');
 
 function refreshAll() { refreshStatus(); refreshAlerts(); refreshEvents(); refreshTrades(); }
 refreshAll();
