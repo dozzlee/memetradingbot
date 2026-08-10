@@ -3,9 +3,14 @@
 Insider-cluster momentum intelligence engine for Solana memecoins. See
 `docs/PRD.md` for the full spec (also at `Documents/Meme Trading/Vanguard_Protocol_PRD_v3.0.md`).
 
-The bot only watches wallets, runs safety/momentum checks, and pushes
-alerts to Telegram. It never holds keys or signs transactions — execution
-is manual, via a third-party Telegram trading bot (Trojan, GMGN, etc.).
+The bot watches wallets, runs safety/momentum checks, and pushes alerts to
+Telegram with inline Buy/Skip buttons. Tapping Buy fires a real swap from a
+Solana wallet the bot generates and holds itself (encrypted at rest); an
+open position then exits automatically at a fixed take-profit/stop-loss —
+no manual step for the exit. This is a custodial feature: see
+`WEB_APP_GUIDE.md` §2a before creating or funding the wallet. You can still
+skip all of this and execute manually in a third-party bot (Trojan, GMGN,
+etc.) instead — the alert fires either way.
 
 ## Setup
 
@@ -22,6 +27,9 @@ Fill in `.env`:
 - `TRACKED_WALLETS` — comma-separated insider-cluster addresses (manual recon, PRD §3), optional at startup — you can add wallets from the dashboard instead
 - `SOLANA_TRACKER_API_KEY` — optional, enables cross-confirmation in the rug-gate (PRD §5)
 - `REQUIRE_PUMPFUN_GRADUATION` — optional, defaults off (see rationale in `vanguard/config/settings.py`)
+- `WALLET_ENCRYPTION_KEY`, `POSITION_SIZE_USD`, `MAX_CAPITAL_DEPLOYED_USD`, `TAKE_PROFIT_PCT`,
+  `STOP_LOSS_PCT`, `SLIPPAGE_BPS` — execution wallet + auto-trade config, see `WEB_APP_GUIDE.md` §2a
+  before setting these and creating a wallet
 
 ## Run
 
@@ -66,7 +74,14 @@ Tracked wallets and all history persist in `vanguard.db` (SQLite) across restart
   decision events, alerts, trade ledger) behind a small in-process state
   object shared by the monitor loop and the dashboard.
 - `vanguard/web/` — FastAPI app + static dashboard (`vanguard/web/static/index.html`).
-- `vanguard/alerts/telegram_alert.py` — pushes cleared tokens to Telegram.
+- `vanguard/alerts/telegram_alert.py` — pushes cleared tokens to Telegram with Buy/Skip buttons.
+- `vanguard/alerts/telegram_bot.py` — long-polls Telegram for the Buy/Skip taps (no public webhook
+  needed) and drives the buy execution.
+- `vanguard/wallet/` — the bot's own Solana wallet: `keystore.py` (keypair generation, Fernet
+  encryption at rest, balance reads), `jupiter.py` (quote/build/sign/send a swap), `pricing.py`
+  (SOL/USD lookup for sizing).
+- `vanguard/execution/` — `trader.py` (execute_buy/execute_sell against `POSITION_SIZE_USD`),
+  `position_monitor.py` (polls price on an open position, auto-exits at `TAKE_PROFIT_PCT`/`STOP_LOSS_PCT`).
 - `scripts/find_cluster.py` — insider-cluster recon helper (PRD §3): given
   3+ past token mints from the same developer, pulls each token's early
   buyers via Helius and reports wallets that overlap across all of them.
@@ -87,9 +102,13 @@ behind a reverse proxy with auth. It is not meant to be exposed publicly as-is.
 
 ## Known limitations / next steps
 
-- **Honeypot / sell-route simulation is not implemented.** RugCheck's
-  public report doesn't include it; a real check needs a funded wallet
-  and a swap quote. Treat the rug-gate as necessary but not sufficient.
+- **Honeypot / sell-route simulation is not implemented as a pre-trade check.**
+  RugCheck's public report doesn't include it, and the execution wallet
+  (`vanguard/wallet/`) getting a Jupiter quote at buy time isn't the same as
+  simulating a sell *before* committing capital. Treat the rug-gate as
+  necessary but not sufficient — a token can still be sell-blocked or
+  effectively illiquid after the bot buys it, and the stop-loss can only
+  fire if a sell route still exists.
 - **Insider-cluster recon is still partly manual** (PRD §3) —
   `scripts/find_cluster.py` automates the overlap-diffing step, but you
   still have to find and supply the developer's past launch mints. The

@@ -1,6 +1,6 @@
 ---
 name: vanguard-setup
-description: Set up and operate the Vanguard Protocol Solana wallet-monitoring app, including secure API configuration, Telegram alerts, tracked-wallet onboarding, discovery scans, VPS deployment, and first-run verification.
+description: Set up and operate the Vanguard Protocol Solana wallet-monitoring app, including secure API configuration, Telegram alerts, tracked-wallet onboarding, discovery scans, the custodial execution wallet, VPS deployment, and first-run verification.
 ---
 
 # Vanguard Setup
@@ -12,7 +12,15 @@ Use this skill when the user asks to configure, install, onboard wallets, verify
 - Never write API keys, bot tokens, seed phrases, or private keys into this skill, source control, chat output, logs, or screenshots.
 - Treat any credential pasted into chat as exposed. Tell the user to revoke and regenerate it before live use.
 - Store credentials only in a local `.env` file with restrictive permissions, or in the VPS service's protected environment file.
-- Vanguard must never hold a private key, sign a transaction, or execute a trade.
+- Vanguard can hold a private key and execute trades: the execution wallet in `vanguard/wallet/`
+  is custodial by design (see `WEB_APP_GUIDE.md` §2a). Never generate or fund this wallet inside a
+  throwaway/ephemeral session — only on the persistent host it will actually run on (the VPS), since
+  the encrypted key file and `.env` are both git-ignored and won't survive a session that gets torn down.
+- Never print, log, or otherwise surface the wallet's private key or `WALLET_ENCRYPTION_KEY` value.
+  `vanguard/wallet/keystore.py` is written to keep the decrypted key in memory only for the instant
+  it's needed to sign — do not add logging, debug prints, or API responses that expose it.
+- Before creating the execution wallet, confirm `WALLET_ENCRYPTION_KEY` is set and the user has backed
+  it up somewhere durable and offline. If it's lost, the wallet's funds are unrecoverable.
 
 ## Setup workflow
 
@@ -88,12 +96,17 @@ Keep the dashboard on `127.0.0.1`; access it through an SSH tunnel unless a sepa
 ## Operational workflow
 
 - Review a wallet before tracking it.
-- Use fixed `$5` manual trades during calibration.
-- Configure stop-loss and take-profit rules in the external execution bot.
-- Treat alerts as review prompts, not automatic buys.
-- Record entry, exit, fees, and outcome in the Trade Ledger.
-- Do not scale until the ledger shows positive expectancy after fees and slippage.
-- Remember that sell-route/honeypot simulation is not yet implemented; the rug gate is necessary but not sufficient.
+- If using the built-in execution wallet: confirm `POSITION_SIZE_USD` / `MAX_CAPITAL_DEPLOYED_USD` /
+  `TAKE_PROFIT_PCT` / `STOP_LOSS_PCT` in `.env` before the first live Buy tap — defaults are fixed
+  `$5` / `$5` / `+50%` / `-20%`. Entry still requires a manual Telegram Buy tap per alert; exit is
+  automatic once bought.
+- If executing manually instead (no wallet created in this app): treat alerts as review prompts, not
+  automatic buys, and configure stop-loss/take-profit in the external execution bot.
+- Record entry, exit, fees, and outcome in the Trade Ledger (auto-trades log themselves; manual trades
+  need the dashboard form).
+- Do not scale position size until the ledger shows positive expectancy after fees and slippage.
+- Remember that sell-route/honeypot simulation is not implemented as a pre-trade check; the rug gate
+  is necessary but not sufficient, and this applies even more once real capital auto-executes on it.
 
 ## Useful project references
 

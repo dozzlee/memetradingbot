@@ -46,7 +46,25 @@ CREATE TABLE IF NOT EXISTS trades (
     outcome TEXT,
     notes TEXT
 );
+
+CREATE TABLE IF NOT EXISTS bot_wallet (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    address TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
 """
+
+# Columns added after the original trades table shipped — SQLite has no
+# "ADD COLUMN IF NOT EXISTS", so probe-and-add instead. Needed for auto-trades
+# (execute_buy/execute_sell) to record the actual on-chain fill and tx sigs
+# alongside the pre-existing manual-entry columns above.
+TRADES_MIGRATIONS = [
+    ("token_amount", "REAL"),
+    ("decimals", "INTEGER"),
+    ("entry_tx_sig", "TEXT"),
+    ("exit_tx_sig", "TEXT"),
+    ("auto", "INTEGER DEFAULT 0"),
+]
 
 
 def get_conn():
@@ -58,6 +76,10 @@ def get_conn():
 def init_db():
     conn = get_conn()
     conn.executescript(SCHEMA)
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(trades)")}
+    for name, coltype in TRADES_MIGRATIONS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE trades ADD COLUMN {name} {coltype}")
     conn.commit()
     conn.close()
 
@@ -124,15 +146,28 @@ def list_alerts(limit: int = 100) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-# --- trade ledger (manual — the bot never executes, so entries/exits are
-# logged by hand from the dashboard after you act on an alert) ---
+# --- trade ledger. Manual trades are logged by hand from the dashboard;
+# auto trades (auto=1) are opened/closed by vanguard/execution/trader.py
+# against the bot's own wallet, using the actual on-chain fill instead of
+# a hand-entered price. ---
 
-def open_trade(mint: str, wallet: str, entry_price_usd: float, size_usd: float, notes: str = "") -> int:
+def open_trade(
+    mint: str,
+    wallet: str,
+    entry_price_usd: float,
+    size_usd: float,
+    notes: str = "",
+    token_amount: float | None = None,
+    decimals: int | None = None,
+    entry_tx_sig: str | None = None,
+    auto: bool = False,
+) -> int:
     conn = get_conn()
     cur = conn.execute(
-        "INSERT INTO trades (mint, wallet, opened_at, entry_price_usd, size_usd, notes) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (mint, wallet, time.time(), entry_price_usd, size_usd, notes),
+        "INSERT INTO trades (mint, wallet, opened_at, entry_price_usd, size_usd, notes, "
+        "token_amount, decimals, entry_tx_sig, auto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (mint, wallet, time.time(), entry_price_usd, size_usd, notes,
+         token_amount, decimals, entry_tx_sig, int(auto)),
     )
     conn.commit()
     trade_id = cur.lastrowid
@@ -140,7 +175,7 @@ def open_trade(mint: str, wallet: str, entry_price_usd: float, size_usd: float, 
     return trade_id
 
 
-def close_trade(trade_id: int, exit_price_usd: float, fees_usd: float = 0.0):
+def close_trade(trade_id: int, exit_price_usd: float, fees_usd: float = 0.0, exit_tx_sig: str | None = None):
     conn = get_conn()
     row = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
     if row is None:
@@ -155,13 +190,42 @@ def close_trade(trade_id: int, exit_price_usd: float, fees_usd: float = 0.0):
     outcome = "win" if pnl > 0 else ("loss" if pnl < 0 else "breakeven")
 
     conn.execute(
-        "UPDATE trades SET closed_at = ?, exit_price_usd = ?, fees_usd = ?, pnl_usd = ?, outcome = ? "
-        "WHERE id = ?",
-        (time.time(), exit_price_usd, fees_usd, pnl, outcome, trade_id),
+        "UPDATE trades SET closed_at = ?, exit_price_usd = ?, fees_usd = ?, pnl_usd = ?, outcome = ?, "
+        "exit_tx_sig = ? WHERE id = ?",
+        (time.time(), exit_price_usd, fees_usd, pnl, outcome, exit_tx_sig, trade_id),
     )
     conn.commit()
     conn.close()
     return pnl
+
+
+def open_trades() -> list[dict]:
+    """Trades with no closed_at yet — used at startup to resume position monitors."""
+    conn = get_conn()
+    rows = conn.execute("SELECT * FROM trades WHERE closed_at IS NULL AND auto = 1").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# --- bot execution wallet (singleton row; the encrypted key itself lives
+# outside the DB, see vanguard/wallet/keystore.py) ---
+
+def get_bot_wallet() -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM bot_wallet WHERE id = 1").fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def set_bot_wallet(address: str):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO bot_wallet (id, address, created_at) VALUES (1, ?, ?) "
+        "ON CONFLICT(id) DO NOTHING",
+        (address, time.time()),
+    )
+    conn.commit()
+    conn.close()
 
 
 def list_trades(limit: int = 200) -> list[dict]:

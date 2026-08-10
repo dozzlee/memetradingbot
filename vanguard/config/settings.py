@@ -32,3 +32,14 @@ TOP10_CONCENTRATION_LIMIT = 30
 # *before* graduation. Flip on during calibration if false-positive rate
 # on pre-graduation tokens turns out too high.
 REQUIRE_PUMPFUN_GRADUATION = os.getenv("REQUIRE_PUMPFUN_GRADUATION", "false").lower() == "true"
+
+# --- Execution wallet (custodial — see vanguard/wallet/) ---
+WALLET_ENCRYPTION_KEY = os.getenv("WALLET_ENCRYPTION_KEY", "")
+
+POSITION_SIZE_USD = float(os.getenv("POSITION_SIZE_USD", "5"))
+MAX_CAPITAL_DEPLOYED_USD = float(os.getenv("MAX_CAPITAL_DEPLOYED_USD", "5"))
+TAKE_PROFIT_PCT = float(os.getenv("TAKE_PROFIT_PCT", "50"))
+STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "20"))
+SLIPPAGE_BPS = int(os.getenv("SLIPPAGE_BPS", "150"))
+
+POSITION_POLL_INTERVAL_SECONDS = 10

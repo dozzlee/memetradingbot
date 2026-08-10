@@ -7,10 +7,13 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from vanguard import backtest, db, discovery
+from vanguard.alerts import telegram_bot
 from vanguard.config import settings
 from vanguard.core.wallet_tracker import watch_wallets
+from vanguard.execution import position_monitor
 from vanguard.pipeline import on_buy
 from vanguard.state import state
+from vanguard.wallet import keystore, pricing
 
 app = FastAPI(title="Vanguard Protocol")
 
@@ -24,6 +27,24 @@ async def startup():
     # so wallets added/removed via the dashboard survive a restart.
     for addr in settings.TRACKED_WALLETS:
         state.add_wallet(addr)
+
+    # Listens for Buy/Skip taps regardless of whether wallet tracking is
+    # running, so it always starts (not gated behind /api/control/start).
+    if settings.TELEGRAM_BOT_TOKEN:
+        state.telegram_bot_task = asyncio.create_task(telegram_bot.poll_updates())
+
+    # Resume auto-sell monitoring for any position left open across a
+    # restart (e.g. systemd Restart=on-failure) — otherwise a real position
+    # would sit unmonitored with no take-profit/stop-loss watching it.
+    for row in db.open_trades():
+        monitor_task = asyncio.create_task(
+            position_monitor.watch_position(
+                row["id"], row["mint"], row["entry_price_usd"], row["token_amount"], row["decimals"]
+            )
+        )
+        state.set_open_position(
+            row["id"], row["mint"], row["entry_price_usd"], row["token_amount"], row["decimals"], monitor_task
+        )
 
 
 @app.get("/")
@@ -118,7 +139,53 @@ async def discover(min_mcap: float = 500_000, max_tokens: int = 15):
     return await asyncio.to_thread(discovery.discover_wallets, min_mcap, max_tokens)
 
 
-# --- trade ledger (manual — the bot never executes trades itself) ---
+# --- execution wallet (custodial — see vanguard/wallet/keystore.py) ---
+
+@app.get("/api/wallet")
+async def get_wallet():
+    address = keystore.get_address()
+    if not address:
+        return {"exists": False}
+
+    sol_balance = await asyncio.to_thread(keystore.get_sol_balance, address)
+    try:
+        sol_price = await asyncio.to_thread(pricing.get_sol_price_usd)
+        usd_balance = sol_balance * sol_price
+    except Exception:
+        sol_price = None
+        usd_balance = None
+
+    open_position = None
+    if state.open_position:
+        open_position = {k: v for k, v in state.open_position.items() if k != "monitor_task"}
+
+    return {
+        "exists": True,
+        "address": address,
+        "sol_balance": sol_balance,
+        "sol_price_usd": sol_price,
+        "usd_balance": usd_balance,
+        "open_position": open_position,
+        "config": {
+            "position_size_usd": settings.POSITION_SIZE_USD,
+            "max_capital_deployed_usd": settings.MAX_CAPITAL_DEPLOYED_USD,
+            "take_profit_pct": settings.TAKE_PROFIT_PCT,
+            "stop_loss_pct": settings.STOP_LOSS_PCT,
+        },
+    }
+
+
+@app.post("/api/wallet/init")
+async def init_wallet():
+    try:
+        address = await asyncio.to_thread(keystore.create_wallet)
+    except keystore.WalletError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"address": address}
+
+
+# --- trade ledger (manual entries from before/outside auto-trading;
+# auto trades write here too, via db.open_trade(..., auto=True)) ---
 
 class OpenTradePayload(BaseModel):
     mint: str

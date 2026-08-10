@@ -12,6 +12,12 @@ class AppState:
     started_at: float | None = None
     tracked_wallets: list[str] = field(default_factory=list)
     monitor_task: object = None  # asyncio.Task, set by the control API
+    telegram_bot_task: object = None  # asyncio.Task polling Telegram getUpdates
+
+    # The one auto-trade position open at a time (position size ==
+    # MAX_CAPITAL_DEPLOYED_USD in the current config, so a single slot is
+    # enough — see vanguard/alerts/telegram_bot.py's buy handler).
+    open_position: dict | None = None
 
     def load(self):
         db.init_db()
@@ -38,6 +44,21 @@ class AppState:
 
     def alerts(self, limit: int = 100):
         return db.list_alerts(limit)
+
+    def set_open_position(self, trade_id: int, mint: str, entry_price_usd: float,
+                           token_amount: float, decimals: int, monitor_task):
+        self.open_position = {
+            "trade_id": trade_id,
+            "mint": mint,
+            "entry_price_usd": entry_price_usd,
+            "token_amount": token_amount,
+            "decimals": decimals,
+            "opened_at": time.time(),
+            "monitor_task": monitor_task,
+        }
+
+    def clear_open_position(self):
+        self.open_position = None
 
 
 state = AppState()

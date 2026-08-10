@@ -7,3 +7,5 @@ venv/
 logs/*.jsonl
 .DS_Store
 *.db
+*.enc
+vanguard_wallet.json

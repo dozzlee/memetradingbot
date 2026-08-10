@@ -8,7 +8,7 @@ from vanguard.config import settings
 from vanguard.core.holdings import insider_still_holding
 from vanguard.gates.rug_gate import check_token
 from vanguard.gates.momentum_gate import check_momentum, get_market_data
-from vanguard.alerts.telegram_alert import send_alert
+from vanguard.alerts.telegram_alert import send_buy_confirmation
 from vanguard.state import state
 
 logger = logging.getLogger("vanguard")
@@ -47,7 +47,7 @@ async def on_buy(wallet: str, mint: str):
             txns = (data.get("txns") or {}).get("m5") or {}
             ratio = f"{txns.get('buys', 0)}/{txns.get('sells', 0)}"
             try:
-                send_alert(
+                send_buy_confirmation(
                     mint=mint,
                     risk_score=gate_result.get("score", "n/a"),
                     buy_sell_ratio=ratio,

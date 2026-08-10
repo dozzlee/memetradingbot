@@ -85,6 +85,16 @@
   </div>
 </header>
 <main>
+  <div class="card">
+    <h2>Execution Wallet — holds real funds, trades automatically</h2>
+    <div class="disclaimer">
+      Custodial: the bot generates and holds this wallet's private key (encrypted at rest with
+      WALLET_ENCRYPTION_KEY) and signs real swaps with it. Fund only what you're willing to trade with —
+      each auto-trade is a fixed position size, exiting automatically at the configured take-profit/stop-loss.
+    </div>
+    <div id="wallet-body"></div>
+  </div>
+
   <div class="row">
     <div class="card">
       <h2>Tracked Wallets</h2>
@@ -214,6 +224,56 @@ async function refreshStatus() {
     btn.onclick = async () => {
       await api('/api/wallets/' + encodeURIComponent(btn.dataset.addr), { method: 'DELETE' });
       refreshStatus();
+    };
+  });
+}
+
+async function refreshWallet() {
+  const w = await api('/api/wallet');
+  const out = $('#wallet-body');
+
+  if (!w.exists) {
+    out.innerHTML = `
+      <div class="empty" style="margin-bottom:10px;">No execution wallet yet.</div>
+      <button id="create-wallet-btn">Create Wallet</button>
+    `;
+    $('#create-wallet-btn').onclick = async () => {
+      const btn = $('#create-wallet-btn');
+      btn.disabled = true; btn.textContent = 'Creating…';
+      const r = await api('/api/wallet/init', { method: 'POST' });
+      if (r.detail) { alert('Could not create wallet: ' + r.detail); btn.disabled = false; btn.textContent = 'Create Wallet'; return; }
+      refreshWallet();
+    };
+    return;
+  }
+
+  const posHtml = w.open_position ? `
+    <div class="stat"><div class="label">Open position</div><div class="value mono">${short(w.open_position.mint)}</div></div>
+    <div class="stat"><div class="label">Entry</div><div class="value">$${Number(w.open_position.entry_price_usd).toPrecision(4)}</div></div>
+  ` : `<div class="stat"><div class="label">Open position</div><div class="value">none</div></div>`;
+
+  out.innerHTML = `
+    <div class="address-cell" style="margin-bottom:14px;">
+      <span class="address-full mono">${w.address}</span>
+      <span class="address-actions">
+        <button data-addr="${w.address}" class="copy-address">copy</button>
+        <a href="https://solscan.io/account/${w.address}" target="_blank" rel="noopener">Solscan ↗</a>
+      </span>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><div class="label">SOL balance</div><div class="value">${w.sol_balance.toFixed(4)}</div></div>
+      <div class="stat"><div class="label">USD value</div><div class="value">${w.usd_balance !== null ? '$' + w.usd_balance.toFixed(2) : '—'}</div></div>
+      <div class="stat"><div class="label">Position size</div><div class="value">$${w.config.position_size_usd}</div></div>
+      <div class="stat"><div class="label">TP / SL</div><div class="value">+${w.config.take_profit_pct}% / -${w.config.stop_loss_pct}%</div></div>
+      ${posHtml}
+    </div>
+  `;
+  document.querySelectorAll('#wallet-body .copy-address').forEach(btn => {
+    btn.onclick = async () => {
+      await navigator.clipboard.writeText(btn.dataset.addr);
+      const original = btn.textContent;
+      btn.textContent = 'copied ✓';
+      setTimeout(() => { btn.textContent = original; }, 1400);
     };
   });
 }
@@ -464,7 +524,7 @@ $('#discover-btn').onclick = async () => {
   });
 };
 
-function refreshAll() { refreshStatus(); refreshAlerts(); refreshEvents(); refreshTrades(); }
+function refreshAll() { refreshStatus(); refreshWallet(); refreshAlerts(); refreshEvents(); refreshTrades(); }
 refreshAll();
 setInterval(refreshAll, 4000);
 </script>
